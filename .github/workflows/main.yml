@@ -158,15 +158,17 @@ jobs:
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
           IMAGE_TAG: latest
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+          echo "image=$IMAGE_URI" >> $GITHUB_OUTPUT
 
   Continuous-Deployment:
+    name: Continuous Deployment
     needs: build-and-push-ecr-image
     runs-on: self-hosted
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v3
 
       - name: Configure AWS credentials
@@ -177,24 +179,24 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
       - name: Pull latest image
         run: |
+          echo "Pulling image: ${{ needs.build-and-push-ecr-image.outputs.image }}"
           docker pull ${{ needs.build-and-push-ecr-image.outputs.image }}
 
-      - name: Stop and remove container if running
+      - name: Run Docker Image to serve users
         run: |
-          docker ps -q --filter "name=networksecurity" | grep -q . && docker stop networksecurity && docker rm -fv networksecurity || true
-
-      - name: Run Docker container
-        run: |
-          docker run -d -p 8080:8080 --ipc="host" \
-            --name=networksecurity \
+          docker stop networksecurity || true
+          docker rm networksecurity || true
+          docker run -d -p 8080:8080 --ipc="host" --name=networksecurity \
             -e AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }} \
             -e AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }} \
             -e AWS_REGION=${{ secrets.AWS_REGION }} \
             ${{ needs.build-and-push-ecr-image.outputs.image }}
 
-      - name: Clean unused images & containers
-        run: docker system prune -f
+      - name: Clean previous images and containers
+        run: |
+          docker system prune -f
